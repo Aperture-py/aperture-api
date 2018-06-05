@@ -5,11 +5,15 @@ name = "pypi"
 
 [packages]
 flask = "*"
+pillow = "==5.0.0"
+flask-cors = "*"
 
 [dev-packages]
 pylint = "*"
 yapf = "*"
 pylint-quotes = "*"
+requests = "*"
+awsebcli = "*"
 
 [requires]
 python_version = "3.6"
