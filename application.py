@@ -4,16 +4,16 @@ from io import BytesIO
 from PIL import Image
 from flask import Flask, jsonify, request, Response, make_response
 from flask_cors import cross_origin
-app = Flask(__name__)
+application = Flask(__name__)
 
 
-@app.route('/')
+@application.route('/')
 def index():
     resp = make_response(jsonify('hello world!'))
     return resp
 
 
-@app.route('/aperture', methods=['POST', 'OPTIONS'])
+@application.route('/aperture', methods=['POST', 'OPTIONS'])
 @cross_origin(allow_headers=['Content-Type'], methods=['POST', 'OPTIONS'])
 def aperture():
     if request.is_json:
@@ -56,4 +56,4 @@ def aperture():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    application.run(debug=True)
