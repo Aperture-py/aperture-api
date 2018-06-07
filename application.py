@@ -1,58 +1,56 @@
+import os
 import base64
-import re
+
 from io import BytesIO
 from PIL import Image
-from flask import Flask, jsonify, request, Response, make_response
+
+from flask import Flask, jsonify, request, Response, make_response, send_file
 from flask_cors import cross_origin
+
 application = Flask(__name__)
 
 
 @application.route('/')
 def index():
-    resp = make_response(jsonify('hello world!'))
-    return resp
+    return jsonify(success=True, message='hello world!')
 
 
 @application.route('/aperture', methods=['POST', 'OPTIONS'])
 @cross_origin(allow_headers=['Content-Type'], methods=['POST', 'OPTIONS'])
 def aperture():
-    if request.is_json:
-        data = request.get_json(cache=False)
-        image_data = data['image']
+    # Get the image file and it's extension
+    img_file = request.files['image']
+    img_ext = img_file.mimetype.split('image/')[1]
 
-        # Get first occurence of image meta data, need this for later (example: data:image/jpeg:base64)
-        meta = re.search('^data:image/.+;base64,', image_data).group()
-        f_type = meta.split('/')[1].split(';')[0]
-        # only replace the first occurence, since that's all there should be (if not then it's malformed)
-        image_data_raw = image_data.replace(meta, '', 1)
-        # convert the base64 string to bytes
-        encoded_b64 = bytes(image_data_raw, 'utf-8')
-        # decode it
-        stream_orig = BytesIO(base64.b64decode(encoded_b64))
-        size_orig = stream_orig.getbuffer().nbytes
-        img = Image.open(stream_orig)
+    # Get original size
+    img_file.seek(0, os.SEEK_END)
+    size_orig = img_file.tell()
+    img_file.seek(0, 0)  # reset fp to beginning
 
-        stream_new = BytesIO()
-        img.save(stream_new, format=f_type, quality=20)
-        size_new = stream_new.getbuffer().nbytes
-        img = Image.open(stream_new)
+    img = Image.open(img_file)
+    img_stream = BytesIO()
+    img.save(img_stream, format=img_ext, quality=20)
 
-        str_b64 = base64.b64encode(stream_new.getvalue()).decode()
-        str_web_b64 = meta + str_b64
+    # Get new size
+    size_new = img_stream.getbuffer().nbytes
 
-        stream_new.truncate(0)
-        stream_new.close()
+    # Get base64 string for web client
+    str_b64 = base64.b64encode(img_stream.getvalue()).decode()
+    str_web_b64 = 'data:image/' + img_ext + ';base64,' + str_b64
 
-        res_data = jsonify(
-            success=True,
-            image=str_web_b64,
-            size={
-                'before': size_orig,
-                'after': size_new
-            })
+    # Close the stream
+    img_stream.truncate(0)
+    img_stream.close()
 
-        return res_data
-    return jsonify(success=False)
+    res_data = jsonify(
+        success=True,
+        image=str_web_b64,
+        size={
+            'before': size_orig,
+            'after': size_new
+        })
+
+    return res_data
 
 
 if __name__ == '__main__':
