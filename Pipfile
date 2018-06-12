@@ -5,8 +5,8 @@ name = "pypi"
 
 [packages]
 flask = "*"
-pillow = "==5.0.0"
 flask-cors = "*"
+aperturelib = "*"
 
 [dev-packages]
 pylint = "*"
