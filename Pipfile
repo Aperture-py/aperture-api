@@ -5,11 +5,14 @@ name = "pypi"
 
 [packages]
 flask = "*"
+flask-cors = "*"
+aperturelib = "*"
 
 [dev-packages]
 pylint = "*"
 yapf = "*"
 pylint-quotes = "*"
+awsebcli = "*"
 
 [requires]
 python_version = "3.6"
