@@ -34,7 +34,8 @@ def aperture():
         img_ext = img_file.mimetype.split('image/')[1]
         if '.' + img_ext.lower() not in apt.SUPPORTED_EXTENSIONS:
             err = 'Provided image was invalid!'
-            err_ext = ' Image provided through api request was of invalid format ({}). Valid formats are .jpg/.jpeg, .png and .gif.'.format(img_ext)
+            err_ext = ' Image provided through api request was of invalid format ({}). Valid formats are .jpg/.jpeg, .png and .gif.'.format(
+                img_ext)
             log(err + err_ext, 'ERROR')
             raise OptionsError(err)
 
@@ -58,7 +59,7 @@ def aperture():
             res = request.form['resolutions']
             if res:
                 apt_opts['resolutions'] = res
-        
+
         # Parse options (quality and resolutions)
         try:
             apt_opts = req_opts.deserialize(apt_opts)
@@ -84,7 +85,8 @@ def aperture():
                 wmrk_ext = '.' + wmark_img.mimetype.split('image/')[1].lower()
                 if wmrk_ext not in apt.SUPPORTED_EXTENSIONS:
                     err = 'Watermark image was invalid!'
-                    err_ext = ' Watermark image provided through api request was of invalid format ({}). Valid formats are .jpg/.jpeg, .png and .gif.'.format(wmrk_ext)
+                    err_ext = ' Watermark image provided through api request was of invalid format ({}). Valid formats are .jpg/.jpeg, .png and .gif.'.format(
+                        wmrk_ext)
                     log(err + err_ext, 'ERROR')
                     raise OptionsError(err)
                 apt_opts['wmark-img'] = wmark_img
@@ -109,21 +111,24 @@ def aperture():
             err_ext += str(e) + '\n' + traceback.format_exc()
             log(err + err_ext, 'ERROR')
             raise ApertureAPIError(err)
-            
+
         response_images = []
 
-        for i,image in enumerate(aperture_results):
+        for i, image in enumerate(aperture_results):
             try:
                 req_res = None
-                if 'resolutions' in apt_opts and i < len(apt_opts['resolutions']):
+                if 'resolutions' in apt_opts and i < len(
+                        apt_opts['resolutions']):
                     req_res = apt_opts['resolutions'][i]
-                response_images.append(get_response_for_image(image, req_res, size_orig, img_ext, **pil_opts))
+                response_images.append(
+                    get_response_for_image(image, req_res, size_orig, img_ext,
+                                           **pil_opts))
             except Exception as e:
                 err = 'Error occurred during compression of image.'
                 err_ext = ' Error occurred during execution of application.get_response_for_image. This most likely occurred during execution of base64.b64encode or apreturelib.save.\n'
                 err_ext += str(e) + '\n' + traceback.format_exc()
                 log(err + err_ext, 'ERROR')
-                raise ApertureAPIError(err)   
+                raise ApertureAPIError(err)
 
         # If here, success!
         if len(response_images) > 1:
@@ -137,7 +142,7 @@ def aperture():
             err = 'Error occurred during image formatting.'
             err_ext = ' There was a problem formatting/saving images. No data was returned from application.get_response_for_image.'
             log(err + err_ext, 'ERROR')
-            raise ApertureAPIError(err)    
+            raise ApertureAPIError(err)
 
     except Exception as e:
         # Detailed error has already been logged. Just return simple error msg to client.
@@ -150,7 +155,7 @@ def aperture():
         '''
         errs = [{'message': str(e)}]
         resp = jsonify(errors=errs, success=False)
-        resp.status_code = 400 # Bad Request Error. This will update resp.status as well
+        resp.status_code = 400  # Bad Request Error. This will update resp.status as well
         return resp
 
 
@@ -161,16 +166,36 @@ def get_response_for_image(image, req_res, size, ext, **kwargs):
 
     # Convert to base64 string
     str_b64 = base64.b64encode(stream.getvalue()).decode()
-    str_web_b64 = 'data:image/' + ext + ';base64,' + str_b64
 
     # Close the stream
     stream.truncate(0)
     stream.close()
 
     if req_res:
-        return {'image': str_web_b64, 'meta': {'resolution': {'requested': req_res, 'actual': image.size}, 'size': {'before': size, 'after': size_new}}}
+        return {
+            'image': str_b64,
+            'meta': {
+                'resolution': {
+                    'requested': req_res,
+                    'actual': image.size
+                },
+                'size': {
+                    'before': size,
+                    'after': size_new
+                }
+            }
+        }
     else:
-        return {'image': str_web_b64, 'meta': {'size': {'before': size, 'after': size_new}}}
+        return {
+            'image': str_b64,
+            'meta': {
+                'size': {
+                    'before': size,
+                    'after': size_new
+                }
+            }
+        }
+
 
 def log(msg, level):
     level = level.upper()
