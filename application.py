@@ -20,6 +20,7 @@ def index():
 @application.route('/aperture', methods=['POST', 'OPTIONS'])
 @cross_origin(allow_headers=['Content-Type'], methods=['POST', 'OPTIONS'])
 def aperture():
+    orig_stream = BytesIO() # For use if file cannot be compressed.
     try:
         # Get the image file and it's extension & error check
         img_file = None
@@ -29,7 +30,10 @@ def aperture():
             err = 'No input image was provided!'
             err_ext = ' Either the api request did not contain an image, or the image could not be read.'
             log(err + err_ext, 'ERROR')
-            raise OptionsError(err)
+            raise OptionsError(err) 
+
+        # Save original stream for later if needed
+        img_file.save(orig_stream)  
 
         img_ext = img_file.mimetype.split('image/')[1]
         if '.' + img_ext.lower() not in apt.SUPPORTED_EXTENSIONS:
@@ -70,12 +74,17 @@ def aperture():
             log(err + err_ext, 'ERROR')
             raise ApertureAPIError(err)
 
-        # Create options to be passed to apt.save (just quality for now)
-        # TODO: Maybe copy compression logic from CLI into here?
-        if 'quality' in apt_opts:
-            pil_opts['quality'] = apt_opts['quality']
-            # pil_opts['optimize'] = apt_opts['optimize']
-            # ...
+        # Get original size (for later)
+        img_file.seek(0, os.SEEK_END)
+        size_orig = img_file.tell()
+        img_file.seek(0, 0)  # reset fp to beginning
+
+        #Max file size is 50MB
+        if size_orig > 52428800:
+            err = 'Input image too large.'
+            err_ext = ' The input image was {} bytes. Max size is 50MB.'.format(size_orig)
+            log(err + err_ext, 'ERROR')
+            raise ApertureAPIError(err)
 
         # Check if a watermark image was provided
         if 'watermark' in request.files:
@@ -97,11 +106,6 @@ def aperture():
             if wmark_txt:
                 apt_opts['wmark-txt'] = wmark_txt
 
-        # Get original size
-        img_file.seek(0, os.SEEK_END)
-        size_orig = img_file.tell()
-        img_file.seek(0, 0)  # reset fp to beginning
-
         aperture_results = []
         try:
             aperture_results = apt.format_image(img_file, apt_opts)
@@ -112,8 +116,87 @@ def aperture():
             log(err + err_ext, 'ERROR')
             raise ApertureAPIError(err)
 
-        response_images = []
+        # Create options to be passed to apt.save
+        if 'quality' in apt_opts:
+            pil_opts['quality'] = apt_opts['quality']
+            qual = pil_opts['quality']
+            mode = None
+            if len(aperture_results) > 0:
+                mode = aperture_results[0].mode
 
+            #Make sure we at least try to compress all files types
+            img_format = img_ext.upper()
+            if img_format in ['JPG', 'JPEG']:
+                if qual <= 60:
+                    pil_opts['optimize'] = True
+            elif img_format == 'PNG' and mode not in ['P', 'L']:
+                '''
+                'quality' values from 1-95 will map to compress_level values between 1 and 9. 
+                all values of 'quality' below 47 will map to maximum compression (9). This is because
+                this compression doesn't actually degrade image quality, even though the quality
+                attribute for .jpg images does. Because of this, users are more likely to provide 
+                higher quality levels than lower ones, but we still want them to get a good level 
+                of compression with their .png images.
+                ---------------------------
+                0-46    = 9     71-76   = 4
+                47-52   = 8     77-82   = 3
+                53-58   = 7     83-88   = 2
+                59-64   = 6     89-95   = 1
+                65-70   = 5
+                ---------------------------
+                '''
+                comp_lvl = 10 - int((((qual + 5) - 40) / 6))
+                if comp_lvl == 0:
+                    comp_lvl = 1
+                elif comp_lvl > 9:
+                    comp_lvl = 9
+                pil_opts['compress_level'] = comp_lvl
+                #If input image was PNG and desired quality was <=20, convert to palette image
+                if qual <= 20:
+                    #Degrades image quality but decreases file size dramatically
+                    for i in range(len(aperture_results)):
+                        aperture_results[i] = aperture_results[i].convert('P', palette=1, colors=256)
+            elif img_format in ['PNG', 'GIF']:
+                # NOTE:
+                # Only single frame Gif's will be handled. Animated Gif's will only have
+                #  their first frame saved
+
+                # TODO:
+                #Single frame gif's can be compressed a lot if converted to jpg... maybe we can ask
+                # users if they want to allow gifs to be converted for more compression?
+                #if img_format == 'GIF':
+                #   image = image.convert('RGB')
+                #   #Would need to ensure filetype changes to match
+                '''
+                Not sure why this works, but converting palette images to RGB
+                and then back to palette helps compress them much better than
+                just trying to save the palette image
+                '''
+                was_P = mode == 'P'
+                was_L = mode == 'L'
+
+                for i in range(len(aperture_results)):
+                    image = aperture_results[i]
+
+                    #Size of original palette
+                    if was_P:
+                        cols = int(len(image.getpalette()) / 3)
+
+                    if mode not in ['RGB', 'RGBA']:
+                        image = image.convert('RGBA')
+
+                    if was_P:
+                        image = image.convert('P', palette=1, colors=cols)
+                    elif was_L:
+                        image = image.convert('L')
+
+                    aperture_results[i] = image #for some reason, changes don't take effect unless we do this
+
+                #.gif images are always 'P' or 'L' mode.
+                #For palette images, just compress as much as possible always
+                pil_opts['optimize'] = True
+
+        response_images = []
         for i, image in enumerate(aperture_results):
             try:
                 req_res = None
@@ -121,8 +204,9 @@ def aperture():
                         apt_opts['resolutions']):
                     req_res = apt_opts['resolutions'][i]
                 response_images.append(
-                    get_response_for_image(image, req_res, size_orig, img_ext,
-                                           **pil_opts))
+                    get_response_for_image(image, req_res, size_orig, img_ext, orig_stream,
+                                        ('wmark-txt' not in apt_opts and 'wmark-img' not in apt_opts and 'resolutions' not in apt_opts),
+                                        **pil_opts))
             except Exception as e:
                 err = 'Error occurred during compression of image.'
                 err_ext = ' Error occurred during execution of application.get_response_for_image. This most likely occurred during execution of base64.b64encode or apreturelib.save.\n'
@@ -158,14 +242,26 @@ def aperture():
         resp.status_code = 400  # Bad Request Error. This will update resp.status as well
         return resp
 
+    finally:
+        #Always close this
+        orig_stream.truncate(0)
+        orig_stream.close()
 
-def get_response_for_image(image, req_res, size, ext, **kwargs):
+def get_response_for_image(image, req_res, size, ext, orig_stream, can_replace, **kwargs):
     stream = BytesIO()
     apt.save(image, stream, format=ext, **kwargs)
     size_new = stream.getbuffer().nbytes
 
-    # Convert to base64 string
-    str_b64 = base64.b64encode(stream.getvalue()).decode()
+    str_b64 = None
+    #If file was not modified except for attempted compression and
+    # output file is larger than input file, replace output file with
+    # input file.
+    if can_replace and size_new > size:
+        size_new = orig_stream.getbuffer().nbytes
+        str_b64 = base64.b64encode(orig_stream.getvalue()).decode()
+    else:
+        # Convert to base64 string
+        str_b64 = base64.b64encode(stream.getvalue()).decode()
 
     # Close the stream
     stream.truncate(0)
@@ -204,7 +300,7 @@ def log(msg, level):
     elif level == "WARN":
         print("WARNING: " + msg)
     else:
-        print(msg)
+        print(msg)       
 
 
 if __name__ == '__main__':
